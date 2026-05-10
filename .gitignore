@@ -6,5 +6,8 @@ __pycache__/
 data/
 runs/
 outputs/
-inference_videos/
+inference_videos/*
+!inference_videos/05102026_ACT
+inference_videos/05102026_ACT/*
+!inference_videos/05102026_ACT/*.mp4
 ${data}/

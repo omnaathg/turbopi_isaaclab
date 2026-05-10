@@ -234,10 +234,13 @@ class ACTEpisodeDataset(Dataset):
         frames, actions = self.cache.get(record)
         frame = Image.fromarray(frames[sample.frame_idx])
         if self.augment:
-            frame = TF.adjust_brightness(frame, random.uniform(0.80, 1.20))
+            frame = TF.adjust_brightness(frame, random.uniform(0.75, 1.25))
             frame = TF.adjust_contrast(frame, random.uniform(0.80, 1.20))
             frame = TF.adjust_saturation(frame, random.uniform(0.75, 1.25))
             frame = TF.adjust_hue(frame, random.uniform(-0.08, 0.08))
+            if random.random() < 0.40:
+                ks = random.choice([3, 5])
+                frame = TF.gaussian_blur(frame, kernel_size=ks, sigma=random.uniform(0.5, 1.5))
             w, h = frame.size
             crop_frac = random.uniform(0.88, 1.00)
             cw, ch = int(w * crop_frac), int(h * crop_frac)

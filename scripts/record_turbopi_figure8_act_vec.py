@@ -63,6 +63,8 @@ parser.add_argument("--start_yaw_jitter", type=float, default=0.08)
 parser.add_argument("--lateral_offset_jitter", type=float, default=0.11, help="Maximum expert centerline offset in meters.")
 parser.add_argument("--lateral_wave_jitter", type=float, default=0.035, help="Maximum sinusoidal offset variation in meters.")
 parser.add_argument("--action_noise_std", type=float, default=0.0)
+parser.add_argument("--dynamic_physics", action="store_true", default=False,
+                    help="Use dynamic physics (gravity + collision) instead of kinematic teleportation.")
 parser.add_argument("--seed", type=int, default=0)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
@@ -89,6 +91,7 @@ from act_mountain_dataset import ACTEpisodeFrame, ACTEpisodeResult, ACTMountainS
 from common import (
     CAMERA_LINK_TO_SENSOR_POS,
     CAMERA_LINK_TO_SENSOR_ROT,
+    WHEEL_RADIUS,
     build_turbopi_cfg,
     get_wheel_joint_ids,
     twist_to_wheel_targets,
@@ -473,6 +476,26 @@ def main() -> None:
         sim.step()
         scene.update(physics_dt)
     camera.update(physics_dt)
+
+    if args_cli.dynamic_physics:
+        expected_z = scene.env_origins[:, 2] + ROAD_Z + START_HEIGHT
+        robot_z = robot.data.root_pos_w[:, 2]
+        z_err_mm = (robot_z - expected_z) * 1000.0
+        floating = int((z_err_mm > 15.0).sum().item())
+        sunken = int((z_err_mm < -15.0).sum().item())
+        print(
+            f"[physics-validate] robot_z_mean={float(robot_z.mean()):.4f}m  "
+            f"expected≈{float(expected_z.mean()):.4f}m  "
+            f"z_err_mean={float(z_err_mm.mean()):.1f}mm  "
+            f"floating(>15mm)={floating}  sunken(<-15mm)={sunken}  "
+            f"out of {args_cli.num_envs} envs",
+            flush=True,
+        )
+        if floating > args_cli.num_envs // 2:
+            raise RuntimeError(
+                f"Physics validation failed: {floating}/{args_cli.num_envs} robots floating >15mm. "
+                "Increase --settle_steps or check road_platform collision."
+            )
 
     writer = ACTMountainSessionWriter(
         output_root=args_cli.output_dir,

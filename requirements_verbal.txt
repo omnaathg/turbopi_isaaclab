@@ -4,7 +4,7 @@
 
 3. There are 2 language intents (left, right) 
 
-4. the resolution of images collected should 64x64 
+4. the resolution of images collected should 128x128
 
 5. For each language intent I need 16 episodes 
 
@@ -22,13 +22,14 @@
 
 12. Ask me for clarifications regarding how to speed up the pipeline if you time estimate is high 
 
-13. Name the pipeline 05092026_ACT
+13. Name the pipeline 05102026_ACT
 
 14. Make sure gravity and collision physics are enabled 
 15. Ensure car is not floating nor plunged inside the road. Wheels should just touch the road.
 16. Show training and validation loss as we train
-17. ensure whether expert path is overlaid properly on the track/map or not
-18.increase the diversity by using augementations 
+17. Ensure whether the car follows the expert path when car's trajectory is overlaid properly on the track/map or not while training.
+18. increase the diversity by using augementations 
 19. 32 data points per episode
 20. 3-4 laps per episode
 21. Chunk size 5-10
+22. Ensure the training data is robust with physics - gravity, collision and the car is not floating before proceeding

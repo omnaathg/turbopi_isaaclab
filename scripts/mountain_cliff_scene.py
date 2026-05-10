@@ -23,7 +23,7 @@ class MountainCliffSceneCfg:
     road_width: float = 0.48
     road_thickness: float = 0.055
     road_z: float = 0.82
-    start_height: float = 0.055
+    start_height: float = 0.040
     lower_terrain_z: float = -0.42
     shoulder_width: float = 0.10
     rail_height: float = 0.12

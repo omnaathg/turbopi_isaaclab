@@ -54,10 +54,12 @@ class LanguageConditionedACTCVAE(nn.Module):
         super().__init__()
         self.config = config or ACTCVAEConfig()
         cfg = self.config
-        if cfg.image_width != 128 or cfg.image_height != 128:
-            raise ValueError("This ACT architecture is fixed to 128x128 camera inputs.")
-        if cfg.d_model != 64 or cfg.chunk_size != 5 or cfg.action_dim != 4:
-            raise ValueError("This implementation follows the fixed [64 dim, chunk 5, action 4] diagram.")
+        if cfg.image_width % 16 != 0 or cfg.image_height % 16 != 0:
+            raise ValueError(
+                f"image_width and image_height must be multiples of 16 (4 stride-2 conv blocks). "
+                f"Got {cfg.image_width}x{cfg.image_height}."
+            )
+        num_spatial_tokens = (cfg.image_height // 16) * (cfg.image_width // 16)
 
         self.vision = nn.Sequential(
             ConvBlock(3, 16, kernel_size=5, stride=2, padding=2),
@@ -65,7 +67,7 @@ class LanguageConditionedACTCVAE(nn.Module):
             ConvBlock(32, 64, kernel_size=3, stride=2, padding=1),
             ConvBlock(64, 64, kernel_size=3, stride=2, padding=1),
         )
-        self.spatial_pos = nn.Parameter(torch.zeros(64, cfg.d_model))
+        self.spatial_pos = nn.Parameter(torch.zeros(num_spatial_tokens, cfg.d_model))
         self.language_embedding = nn.Embedding(cfg.task_vocab_size, cfg.d_model)
 
         self.cvae_encoder = nn.Sequential(
@@ -102,14 +104,15 @@ class LanguageConditionedACTCVAE(nn.Module):
             nn.Tanh(),
         )
 
-        base_count = self.parameter_count()
-        calibration_count = cfg.expected_param_count - base_count
-        if calibration_count < 0:
-            raise ValueError(f"Base model has {base_count} parameters, above requested {cfg.expected_param_count}.")
-        self.parameter_count_calibration = nn.Parameter(torch.zeros(calibration_count))
-        final_count = self.parameter_count()
-        if final_count != cfg.expected_param_count:
-            raise ValueError(f"ACT parameter count mismatch: expected {cfg.expected_param_count}, got {final_count}.")
+        if cfg.expected_param_count > 0:
+            base_count = self.parameter_count()
+            calibration_count = cfg.expected_param_count - base_count
+            if calibration_count < 0:
+                raise ValueError(f"Base model has {base_count} params, above requested {cfg.expected_param_count}.")
+            self.parameter_count_calibration = nn.Parameter(torch.zeros(calibration_count))
+            final_count = self.parameter_count()
+            if final_count != cfg.expected_param_count:
+                raise ValueError(f"ACT parameter count mismatch: expected {cfg.expected_param_count}, got {final_count}.")
 
     def parameter_count(self) -> int:
         return sum(parameter.numel() for parameter in self.parameters() if parameter.requires_grad)
@@ -129,8 +132,9 @@ class LanguageConditionedACTCVAE(nn.Module):
         task_ids: torch.Tensor,
         action_chunk: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
-        if images.ndim != 4 or images.shape[1:] != (3, self.config.image_height, self.config.image_width):
-            raise ValueError(f"Expected images [B,3,128,128], got {tuple(images.shape)}")
+        expected = (3, self.config.image_height, self.config.image_width)
+        if images.ndim != 4 or images.shape[1:] != expected:
+            raise ValueError(f"Expected images [B,{expected[0]},{expected[1]},{expected[2]}], got {tuple(images.shape)}")
         if task_ids.ndim == 0:
             task_ids = task_ids.unsqueeze(0)
         task_ids = task_ids.long()

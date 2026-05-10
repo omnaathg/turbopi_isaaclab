@@ -41,11 +41,11 @@ class ACTPolicyRuntime:
 
     @property
     def image_width(self) -> int:
-        return DEFAULT_IMAGE_WIDTH
+        return int(self.model.config.image_width)
 
     @property
     def image_height(self) -> int:
-        return DEFAULT_IMAGE_HEIGHT
+        return int(self.model.config.image_height)
 
     def set_task(self, task: str) -> None:
         if task not in self.task_to_index:
@@ -57,8 +57,9 @@ class ACTPolicyRuntime:
 
     def preprocess(self, image_rgb: np.ndarray) -> torch.Tensor:
         image = Image.fromarray(image_rgb)
-        if image.size != (DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT):
-            image = image.resize((DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT), Image.Resampling.BILINEAR)
+        w, h = self.image_width, self.image_height
+        if image.size != (w, h):
+            image = image.resize((w, h), Image.Resampling.BILINEAR)
         return TF.to_tensor(image).unsqueeze(0).to(self.device)
 
     @torch.no_grad()

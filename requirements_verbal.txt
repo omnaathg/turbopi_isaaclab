@@ -1,0 +1,34 @@
+1. Collecting training data with expert trajectory + gaussian noise 
+
+2. 1 episode = 3 loops around the left or right path 
+
+3. There are 2 language intents (left, right) 
+
+4. the resolution of images collected should 64x64 
+
+5. For each language intent I need 16 episodes 
+
+6. Make training data collection process happen in parallel 
+
+7. For training the ACT, keep the epochs = 45
+
+8. Once the training is done, run the inference pipeline 
+
+9. THe inference video should be 30s in duration and the resolution should be 360px 
+
+10. I need one inferene video per language intent 
+
+11. Make sure that you implement what is necessary for the full pipeline to execute in <10min 
+
+12. Ask me for clarifications regarding how to speed up the pipeline if you time estimate is high 
+
+13. Name the pipeline 05092026_ACT
+
+14. Make sure gravity and collision physics are enabled 
+15. Ensure car is not floating nor plunged inside the road. Wheels should just touch the road.
+16. Show training and validation loss as we train
+17. ensure whether expert path is overlaid properly on the track/map or not
+18.increase the diversity by using augementations 
+19. 32 data points per episode
+20. 3-4 laps per episode
+21. Chunk size 5-10

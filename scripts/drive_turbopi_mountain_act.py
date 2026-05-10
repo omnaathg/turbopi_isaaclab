@@ -277,18 +277,63 @@ def open_video_writers(task_name: str, views: tuple[str, ...]) -> dict[str, cv2.
     return writers
 
 
+def _draw_minimap(
+    frame: np.ndarray,
+    pose: tuple[float, float, float],
+    route: tuple[tuple[float, float], ...],
+    task_name: str,
+    size: int = 120,
+    margin: int = 8,
+) -> np.ndarray:
+    """Draw a top-down minimap in the bottom-left corner of the frame."""
+    all_x = [p[0] for p in route]
+    all_y = [p[1] for p in route]
+    pad = 0.3
+    x_min, x_max = min(all_x) - pad, max(all_x) + pad
+    y_min, y_max = min(all_y) - pad, max(all_y) + pad
+
+    def to_px(wx: float, wy: float) -> tuple[int, int]:
+        px = int((wx - x_min) / max(x_max - x_min, 1e-6) * (size - 1))
+        py = int((1.0 - (wy - y_min) / max(y_max - y_min, 1e-6)) * (size - 1))
+        return px, py
+
+    mini = np.zeros((size, size, 3), dtype=np.uint8)
+    mini[:] = (30, 30, 30)
+    color = (60, 160, 255) if task_name == "go_left" else (50, 180, 80)
+    pts = np.array([to_px(wx, wy) for wx, wy in route], dtype=np.int32)
+    cv2.polylines(mini, [pts], isClosed=True, color=color, thickness=2, lineType=cv2.LINE_AA)
+    for wx, wy in route:
+        cv2.circle(mini, to_px(wx, wy), 3, (220, 220, 100), -1, lineType=cv2.LINE_AA)
+    rx, ry, _ = pose
+    rpx, rpy = to_px(rx, ry)
+    cv2.circle(mini, (rpx, rpy), 5, (255, 80, 80), -1, lineType=cv2.LINE_AA)
+    cv2.rectangle(mini, (0, 0), (size - 1, size - 1), (120, 120, 120), 1)
+
+    h, w = frame.shape[:2]
+    y0 = h - size - margin
+    x0 = margin
+    frame = frame.copy()
+    frame[y0:y0 + size, x0:x0 + size] = mini
+    return frame
+
+
 def write_video_frames(
     video_cameras: dict[str, Camera] | None,
     video_writers: dict[str, cv2.VideoWriter],
     robot,
     scene_cfg: MountainCliffSceneCfg,
     dt: float,
+    pose: tuple[float, float, float] | None = None,
+    route: tuple[tuple[float, float], ...] | None = None,
+    task_name: str = "",
 ) -> None:
     if not video_cameras or not video_writers:
         return
     update_video_cameras(video_cameras, robot, scene_cfg, dt)
     for view, writer in video_writers.items():
         frame = cv2.cvtColor(rgb_frame(video_cameras[view]), cv2.COLOR_RGB2BGR)
+        if pose is not None and route is not None:
+            frame = _draw_minimap(frame, pose, route, task_name)
         writer.write(frame)
 
 
@@ -465,7 +510,8 @@ def main() -> None:
                     and sim_time + 0.5 * physics_dt >= next_video_time
                     and (args_cli.duration <= 0 or next_video_time <= args_cli.duration + 1e-9)
                 ):
-                    write_video_frames(video_cameras, video_writers, robot, scene_cfg, physics_dt)
+                    write_video_frames(video_cameras, video_writers, robot, scene_cfg, physics_dt,
+                                       pose=pose, route=route, task_name=args_cli.task)
                     next_video_time += video_dt
             camera.update(dt=control_dt)
             elapsed += control_dt

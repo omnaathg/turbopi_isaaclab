@@ -202,6 +202,7 @@ class ACTEpisodeDataset(Dataset):
         image_size: tuple[int, int] = (DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT),
         chunk_size: int = DEFAULT_ACTION_CHUNK_SIZE,
         augment: bool = False,
+        max_frames_per_episode: int = 0,
     ):
         self.records = list(records)
         self.task_names = list(task_names)
@@ -209,11 +210,19 @@ class ACTEpisodeDataset(Dataset):
         self.image_size = image_size
         self.chunk_size = chunk_size
         self.augment = augment
-        self.samples = [
-            SampleIndex(episode_idx=episode_idx, frame_idx=frame_idx)
-            for episode_idx, record in enumerate(self.records)
-            for frame_idx in range(record.num_frames)
-        ]
+        self.max_frames_per_episode = max_frames_per_episode
+
+        samples: list[SampleIndex] = []
+        for episode_idx, record in enumerate(self.records):
+            n = record.num_frames
+            if max_frames_per_episode > 0 and n > max_frames_per_episode:
+                indices = [int(round(i * (n - 1) / (max_frames_per_episode - 1))) for i in range(max_frames_per_episode)]
+                indices = sorted(set(indices))
+            else:
+                indices = list(range(n))
+            for frame_idx in indices:
+                samples.append(SampleIndex(episode_idx=episode_idx, frame_idx=frame_idx))
+        self.samples = samples
         self.cache = EpisodeCache(image_size=image_size, max_items=max(8, min(64, len(records) or 8)))
 
     def __len__(self) -> int:
@@ -225,10 +234,20 @@ class ACTEpisodeDataset(Dataset):
         frames, actions = self.cache.get(record)
         frame = Image.fromarray(frames[sample.frame_idx])
         if self.augment:
-            frame = TF.adjust_brightness(frame, random.uniform(0.92, 1.08))
-            frame = TF.adjust_contrast(frame, random.uniform(0.92, 1.08))
-            frame = TF.adjust_saturation(frame, random.uniform(0.92, 1.08))
+            frame = TF.adjust_brightness(frame, random.uniform(0.80, 1.20))
+            frame = TF.adjust_contrast(frame, random.uniform(0.80, 1.20))
+            frame = TF.adjust_saturation(frame, random.uniform(0.75, 1.25))
+            frame = TF.adjust_hue(frame, random.uniform(-0.08, 0.08))
+            w, h = frame.size
+            crop_frac = random.uniform(0.88, 1.00)
+            cw, ch = int(w * crop_frac), int(h * crop_frac)
+            i = random.randint(0, h - ch)
+            j = random.randint(0, w - cw)
+            frame = TF.resized_crop(frame, i, j, ch, cw, (h, w))
         image = TF.to_tensor(frame)
+        if self.augment:
+            noise = torch.randn_like(image) * 0.015
+            image = (image + noise).clamp(0.0, 1.0)
 
         chunk = np.zeros((self.chunk_size, DEFAULT_ACTION_DIM), dtype=np.float32)
         for offset in range(self.chunk_size):
@@ -309,13 +328,22 @@ def build_datasets(
     val_ratio: float = 0.2,
     seed: int = 42,
     augment: bool = True,
+    max_frames_per_episode: int = 0,
 ) -> tuple[ACTEpisodeDataset, ACTEpisodeDataset, list[str]]:
     records = discover_episodes(episodes_dir)
     task_names = discover_task_names(episodes_dir, records)
     train_records = split_sessions(records, "train", val_ratio, seed)
     val_records = split_sessions(records, "val", val_ratio, seed)
     return (
-        ACTEpisodeDataset(train_records, task_names, image_size=image_size, chunk_size=chunk_size, augment=augment),
-        ACTEpisodeDataset(val_records, task_names, image_size=image_size, chunk_size=chunk_size, augment=False),
+        ACTEpisodeDataset(
+            train_records, task_names,
+            image_size=image_size, chunk_size=chunk_size, augment=augment,
+            max_frames_per_episode=max_frames_per_episode,
+        ),
+        ACTEpisodeDataset(
+            val_records, task_names,
+            image_size=image_size, chunk_size=chunk_size, augment=False,
+            max_frames_per_episode=max_frames_per_episode,
+        ),
         task_names,
     )

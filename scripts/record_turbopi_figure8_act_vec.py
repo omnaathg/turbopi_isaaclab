@@ -246,7 +246,11 @@ def build_scene_cfg_class(num_envs: int):
         ),
     }
 
+    left_wp_mat = sim_utils.PreviewSurfaceCfg(diffuse_color=(0.10, 0.45, 0.90), roughness=0.30)
+    right_wp_mat = sim_utils.PreviewSurfaceCfg(diffuse_color=(0.95, 0.55, 0.10), roughness=0.30)
+
     for route_name, points in (("left", LEFT_BASE_VISUAL), ("right", RIGHT_BASE_VISUAL)):
+        wp_mat = left_wp_mat if route_name == "left" else right_wp_mat
         for idx, (start, end) in enumerate(zip(points[:-1], points[1:], strict=False)):
             cx, cy, length, yaw = segment_geometry(start, end)
             attrs[f"{route_name}_deck_{idx:02d}"] = make_asset_cfg(
@@ -268,6 +272,13 @@ def build_scene_cfg_class(num_envs: int):
                     (cx, cy, ROAD_Z + 0.012),
                     yaw,
                 )
+        # Expert path waypoint markers — visible spheres overlaid on the route
+        for idx, (wx, wy) in enumerate(points):
+            attrs[f"{route_name}_wp_{idx:02d}"] = make_asset_cfg(
+                f"{{ENV_REGEX_NS}}/{route_name.capitalize()}Waypoint{idx:02d}",
+                sim_utils.SphereCfg(radius=0.040, collision_props=None, visual_material=wp_mat),
+                (wx, wy, ROAD_Z + 0.055),
+            )
 
     _Cfg = configclass(type("_Figure8VecSceneCfg", (InteractiveSceneCfg,), attrs))
     return _Cfg

@@ -54,6 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="auto")
     parser.add_argument("--no-augment", action="store_true")
     parser.add_argument("--no-progress", action="store_true")
+    parser.add_argument("--chunk-size", type=int, default=DEFAULT_ACTION_CHUNK_SIZE)
+    parser.add_argument("--image-size", type=int, default=DEFAULT_IMAGE_WIDTH,
+                        help="Square image size (width=height). Must be a multiple of 16.")
+    parser.add_argument("--frames-per-episode", type=int, default=0,
+                        help="Uniformly subsample each episode to this many frames (0 = use all frames).")
     return parser
 
 
@@ -138,6 +143,32 @@ def run_epoch(
     }
 
 
+def _save_loss_plot(run_dir: Path, history: list[dict[str, float]]) -> None:
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        epochs = [h["epoch"] for h in history]
+        train_losses = [h["train_loss"] for h in history]
+        val_losses = [h.get("val_loss", float("nan")) for h in history]
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.plot(epochs, train_losses, label="train loss", color="tab:blue")
+        has_val = any(not math.isnan(v) for v in val_losses)
+        if has_val:
+            ax.plot(epochs, val_losses, label="val loss", color="tab:orange")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Loss")
+        ax.set_title("ACT Training / Validation Loss")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(run_dir / "loss_curve.png", dpi=100)
+        plt.close(fig)
+    except Exception:
+        pass
+
+
 def main() -> None:
     args = build_parser().parse_args()
     set_seed(args.seed)
@@ -145,6 +176,9 @@ def main() -> None:
     run_dir = resolve_run_dir(Path(args.run_dir))
     checkpoint_dir = run_dir / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    image_size = (args.image_size, args.image_size)
+    chunk_size = args.chunk_size
 
     use_cache = False
     if args.cache_dir and args.cache_mode != "off":
@@ -158,11 +192,12 @@ def main() -> None:
     else:
         train_ds, val_ds, task_names = build_datasets(
             args.episodes_dir,
-            image_size=(DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT),
-            chunk_size=DEFAULT_ACTION_CHUNK_SIZE,
+            image_size=image_size,
+            chunk_size=chunk_size,
             val_ratio=args.val_ratio,
             seed=args.seed,
             augment=not args.no_augment,
+            max_frames_per_episode=args.frames_per_episode,
         )
         dataset_source = str(args.episodes_dir)
     if len(train_ds) == 0:
@@ -170,7 +205,7 @@ def main() -> None:
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers) if len(val_ds) else None
 
-    config = ACTCVAEConfig(task_vocab_size=len(task_names))
+    config = ACTCVAEConfig(task_vocab_size=len(task_names), chunk_size=chunk_size, image_width=image_size[0], image_height=image_size[1])
     model = build_model(config).to(device)
     print(f"[train] Model parameters: {model.parameter_count():,}")
     print(f"[train] Tasks: {task_names}")
@@ -241,11 +276,16 @@ def main() -> None:
                 ),
                 encoding="utf-8",
             )
+            val_str = f"{val_metrics['loss']:.4f}" if not math.isnan(val_metrics.get("loss", math.nan)) else "n/a"
             print(
-                f"[train] epoch {epoch:03d} train_loss={train_metrics['loss']:.4f} "
-                f"val_loss={val_metrics['loss']:.4f} best={best_epoch}",
+                f"[train] epoch {epoch:03d}/{args.epochs}  "
+                f"train_loss={train_metrics['loss']:.4f}  "
+                f"val_loss={val_str}  "
+                f"recon={train_metrics['recon']:.4f}  kl={train_metrics['kl']:.4f}  "
+                f"best_epoch={best_epoch}",
                 flush=True,
             )
+            _save_loss_plot(run_dir, history)
     except KeyboardInterrupt:
         interrupted = True
         print("\n[train] Interrupted; last/best checkpoints already saved.", flush=True)

@@ -62,6 +62,8 @@ parser.add_argument("--start_yaw_jitter", type=float, default=0.08, help="Per-ep
 parser.add_argument("--camera_xyz_jitter", type=float, default=0.015, help="Per-episode robot-camera eye/target jitter in meters.")
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--no_rollers", action="store_true")
+parser.add_argument("--dynamic_physics", action="store_true", default=False,
+                    help="Use dynamic physics (gravity + collision) to match the inference environment.")
 parser.add_argument("--video_output_dir", type=str, default=None, help="Optional directory for high-res teacher episode MP4s.")
 parser.add_argument("--video_width", type=int, default=1080)
 parser.add_argument("--video_height", type=int, default=1080)
@@ -440,6 +442,13 @@ def integrate(pose: tuple[float, float, float], command: tuple[float, float, flo
     )
 
 
+def apply_dynamic(robot, wheel_joint_ids, arm_joint_ids, command: tuple[float, float, float]) -> None:
+    command_t = torch.tensor([[command[0], command[1], command[2]]], dtype=torch.float32, device=robot.device)
+    robot.set_joint_velocity_target(twist_to_wheel_targets(command_t, robot.device), joint_ids=wheel_joint_ids)
+    hold_arm_posture(robot, arm_joint_ids)
+    robot.write_data_to_sim()
+
+
 def write_kinematic(robot, wheel_joint_ids, arm_joint_ids, pose, command, root_z: float) -> None:
     x, y, yaw = pose
     vx, vy, wz = command
@@ -472,6 +481,7 @@ def step_n(
     view,
     root_z,
     variation: EpisodeVariation | None = None,
+    dynamic_physics: bool = False,
 ):
     current = pose
     for _ in range(substeps):
@@ -479,14 +489,19 @@ def step_n(
             return False, current
         if not sim.is_playing():
             sim.play()
-        current = integrate(current, command, physics_dt)
-        write_kinematic(robot, wheel_joint_ids, arm_joint_ids, current, command, root_z)
+        if dynamic_physics:
+            apply_dynamic(robot, wheel_joint_ids, arm_joint_ids, command)
+        else:
+            current = integrate(current, command, physics_dt)
+            write_kinematic(robot, wheel_joint_ids, arm_joint_ids, current, command, root_z)
         sim.step()
         robot.update(physics_dt)
         if view == "chase":
             update_chase_camera(robot, viewport)
     update_policy_camera(camera, robot, variation)
     camera.update(dt=substeps * physics_dt)
+    if dynamic_physics:
+        current = get_pose(robot)
     return True, current
 
 
@@ -539,7 +554,8 @@ def run_episode(
         wrap_to_pi(route.start_yaw + variation.start_yaw_offset),
     )
     reset_robot_pose(robot, position=(pose[0], pose[1], root_z), yaw=pose[2])
-    write_kinematic(robot, wheel_joint_ids, arm_joint_ids, pose, (0.0, 0.0, 0.0), root_z)
+    if not args_cli.dynamic_physics:
+        write_kinematic(robot, wheel_joint_ids, arm_joint_ids, pose, (0.0, 0.0, 0.0), root_z)
     physics_dt = float(args_cli.physics_dt)
     control_dt = 1.0 / max(args_cli.control_hz, 1e-6)
     substeps = max(1, int(round(control_dt / physics_dt)))
@@ -558,6 +574,7 @@ def run_episode(
             view,
             root_z,
             variation,
+            dynamic_physics=args_cli.dynamic_physics,
         )
         update_video_cameras(video_cameras, robot, scene_cfg, physics_dt)
         if not ok:
@@ -639,6 +656,7 @@ def run_episode(
             view,
             root_z,
             variation,
+            dynamic_physics=args_cli.dynamic_physics,
         )
         write_video_frames(video_cameras, video_writers, robot, scene_cfg, control_dt)
         if not ok:

@@ -3,17 +3,17 @@
 # Full collect → validate → train → infer pipeline for TurboPi figure-8 ACT.
 #
 # Requirements implemented:
-#   • 128x128 images, 32 parallel envs, 16 episodes per intent (32 total)
+#   • 128x128 images, single-env mountain-cliff recorder, 16 episodes per intent (32 total)
+#   • Training environment == inference environment: same mountain cliff scene,
+#     same dynamic physics (gravity + collision), same guard rails
+#   • Guard rails restored on figure-8 outer edges (cliff side of each loop)
 #   • 3 laps per episode, 32 data points per episode (uniform subsampled)
 #   • ACT chunk size 8, 45 training epochs
-#   • FULL DYNAMIC PHYSICS: gravity + collision for both collection and inference
-#   • Wheels grounded via START_HEIGHT=0.040 + road collision platform
 #   • Physics validation after collection (trajectory overlay PNG)
-#   • Expert path waypoint overlay visible in vec scene
 #   • Training/validation loss curves saved per epoch
 #   • Gaussian blur + color/crop augmentations in training
 #   • Inference: 30s, 640x360 video, one per intent (chase + isometric views)
-# Expected wall time: ≈ 8–9 min on a single GPU machine
+# Expected wall time: ≈ 35–45 min on a single GPU machine (collection is sequential)
 
 set -euo pipefail
 
@@ -54,6 +54,7 @@ RUN_DIR="${REPO_ROOT}/runs/${PIPELINE_NAME}"
 INFERENCE_DIR="${REPO_ROOT}/inference_videos/${PIPELINE_NAME}"
 LOG_DIR="${REPO_ROOT}/logs/${PIPELINE_NAME}"
 SESSION_NAME="${PIPELINE_NAME}_$(date -u +%Y%m%d_%H%M%S)"
+SESSION_DIR="${DATA_DIR}/${SESSION_NAME}"
 
 mkdir -p "${DATA_DIR}" "${RUN_DIR}" "${INFERENCE_DIR}" "${LOG_DIR}"
 
@@ -72,14 +73,13 @@ log "  runs → ${RUN_DIR}"
 log "  inference → ${INFERENCE_DIR}"
 log "========================================================"
 
-# ── Step 1: Vectorised data collection (dynamic physics) ─────────────────────
-log "Step 1/4: Collecting data (${NUM_ENVS} envs, $((EPISODES_PER_INTENT * 2)) episodes, dynamic physics)…"
+# ── Step 1: Single-env mountain cliff collection (dynamic physics, matches inference) ──
+log "Step 1/4: Collecting data ($((EPISODES_PER_INTENT * 2)) episodes, mountain cliff scene, dynamic physics)…"
 COLLECT_LOG="${LOG_DIR}/collect.log"
 
-"${ISAACLAB_PY}" -p "${REPO_ROOT}/scripts/record_turbopi_figure8_act_vec.py" \
+"${ISAACLAB_PY}" -p "${REPO_ROOT}/scripts/record_turbopi_mountain_act.py" \
     --headless \
     --dynamic_physics \
-    --num_envs      "${NUM_ENVS}" \
     --num_episodes  "$((EPISODES_PER_INTENT * 2))" \
     --laps          "${LAPS}" \
     --image_width   "${IMAGE_WIDTH}" \
@@ -88,7 +88,7 @@ COLLECT_LOG="${LOG_DIR}/collect.log"
     --session_name  "${SESSION_NAME}" \
     --dataset_name  "${PIPELINE_NAME}" \
     --action_noise_std 0.03 \
-    --settle_steps  "${SETTLE_STEPS}" \
+    --settle_steps  30 \
     --seed          "${SEED}" \
     2>&1 | tee "${COLLECT_LOG}"
 
@@ -115,7 +115,7 @@ log "Step 2/4: Training ACT (epochs=${EPOCHS}, chunk=${CHUNK_SIZE}, img=${IMAGE_
 TRAIN_LOG="${LOG_DIR}/train.log"
 
 "${ISAACLAB_PY}" -p "${REPO_ROOT}/train_turbopi_mountain_act.py" \
-    --episodes-dir      "${DATA_DIR}" \
+    --episodes-dir      "${SESSION_DIR}" \
     --run-dir           "${RUN_DIR}" \
     --epochs            "${EPOCHS}" \
     --batch-size        "${BATCH_SIZE}" \

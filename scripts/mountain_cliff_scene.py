@@ -527,14 +527,86 @@ def _spawn_right_branch(scene_cfg: MountainCliffSceneCfg) -> None:
         )
 
 
-def _spawn_guard_rails(scene_cfg: MountainCliffSceneCfg) -> None:
-    """Legacy shelf-road rails are disabled for the figure-8 track.
+def _spawn_figure8_guard_rails(scene_cfg: MountainCliffSceneCfg) -> None:
+    """Outer-edge guard rails for the closed figure-8 map.
 
-    The old one-sided rail followed ROAD_CENTERLINE directly. On the closed
-    loop geometry, that side alternates between outer and inner edges, which
-    can place posts across the drivable path at bends.
+    For each road segment the outer (cliff) side is determined by checking
+    which perpendicular direction points away from the geometric center of
+    the loop the segment belongs to.  The common shared arm gets rails on
+    both sides since terrain drops off on either side.
     """
+    rail_color = (0.47, 0.45, 0.40)
+    post_color = (0.36, 0.28, 0.20)
+    offset = 0.5 * scene_cfg.road_width + scene_cfg.shoulder_width + 0.035
+
+    def _outer_sign(
+        start: tuple[float, float],
+        end: tuple[float, float],
+        loop_center: tuple[float, float],
+    ) -> float:
+        dx = end[0] - start[0]
+        dy = end[1] - start[1]
+        seg_len = max(math.hypot(dx, dy), 1e-6)
+        ux, uy = dx / seg_len, dy / seg_len
+        cx = 0.5 * (start[0] + end[0])
+        cy = 0.5 * (start[1] + end[1])
+        # left perp (CCW from travel dir): (-uy, ux)
+        d_left = math.hypot(cx - uy - loop_center[0], cy + ux - loop_center[1])
+        # right perp (CW): (uy, -ux)
+        d_right = math.hypot(cx + uy - loop_center[0], cy - ux - loop_center[1])
+        return 1.0 if d_left > d_right else -1.0
+
+    def _rail(name: str, start: tuple[float, float], end: tuple[float, float], side_sign: float) -> None:
+        cx, cy, ux, uy, yaw = _segment_geometry(start, end)
+        length = math.dist(start, end)
+        ox = -uy * side_sign * offset
+        oy = ux * side_sign * offset
+        _cuboid(
+            f"/World/MountainCliffRoad/{name}Rail",
+            size=(0.030, max(0.10, length - 0.16), 0.024),
+            translation=(cx + ox, cy + oy, scene_cfg.road_z + scene_cfg.rail_height),
+            color=rail_color, collision=True, roughness=0.75, yaw=yaw,
+        )
+        _cuboid(
+            f"/World/MountainCliffRoad/{name}LowerRail",
+            size=(0.024, max(0.08, length - 0.22), 0.018),
+            translation=(cx + ox, cy + oy, scene_cfg.road_z + 0.060),
+            color=(0.32, 0.31, 0.28), collision=True, roughness=0.85, yaw=yaw,
+        )
+        post_count = max(2, int(length / 0.24))
+        for post_idx in range(post_count):
+            t = (post_idx + 0.5) / post_count
+            px = start[0] + t * (end[0] - start[0]) + ox
+            py = start[1] + t * (end[1] - start[1]) + oy
+            _cuboid(
+                f"/World/MountainCliffRoad/{name}Post{post_idx:02d}",
+                size=(0.030, 0.030, scene_cfg.rail_height),
+                translation=(px, py, scene_cfg.road_z + 0.5 * scene_cfg.rail_height),
+                color=post_color, collision=True, roughness=0.85, yaw=yaw,
+            )
+
+    # Geometric centers of each loop (average of loop waypoints)
+    left_center: tuple[float, float] = (-0.97, -0.28)
+    right_center: tuple[float, float] = (0.97, -0.28)
+
+    # Shared arm: rails on both sides (terrain drops off either side)
+    arm = FIGURE8_COMMON_ARM_CENTERLINE
+    for idx, (start, end) in enumerate(zip(arm[:-1], arm[1:], strict=False)):
+        for side_label, side_sign in (("L", 1.0), ("R", -1.0)):
+            _rail(f"Arm{side_label}{idx:02d}", start, end, side_sign)
+
+    # Left loop: outer (cliff) edge only
+    for idx, (start, end) in enumerate(zip(FIGURE8_LEFT_LOOP_CENTERLINE[:-1], FIGURE8_LEFT_LOOP_CENTERLINE[1:], strict=False)):
+        _rail(f"LeftLoop{idx:02d}", start, end, _outer_sign(start, end, left_center))
+
+    # Right loop: outer (cliff) edge only
+    for idx, (start, end) in enumerate(zip(FIGURE8_RIGHT_LOOP_CENTERLINE[:-1], FIGURE8_RIGHT_LOOP_CENTERLINE[1:], strict=False)):
+        _rail(f"RightLoop{idx:02d}", start, end, _outer_sign(start, end, right_center))
+
+
+def _spawn_guard_rails(scene_cfg: MountainCliffSceneCfg) -> None:
     if scene_cfg.map_name == "figure8":
+        _spawn_figure8_guard_rails(scene_cfg)
         return
 
     paths = road_map(scene_cfg)

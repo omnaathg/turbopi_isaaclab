@@ -619,6 +619,8 @@ def run_episode(
                 command=command4.copy(),
                 track_error=float(error),
                 route_progress=float(progress_ratio),
+                pose_xy=(pose[0], pose[1]),
+                pose_yaw=pose[2],
             )
         )
         previous_action = action

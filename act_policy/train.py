@@ -143,6 +143,66 @@ def run_epoch(
     }
 
 
+def _save_trajectory_overlay(run_dir: Path, episodes_dir: Path) -> None:
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import pandas as pd
+
+        _COMMON_ARM = ((0.00, -1.45), (0.00, -0.68), (0.00, 0.10), (0.00, 0.88))
+        _LEFT_LOOP = ((0.00, 0.88), (-0.91, 0.72), (-1.58, 0.30), (-1.82, -0.28),
+                      (-1.58, -0.87), (-0.91, -1.29), (0.00, -1.45))
+        _RIGHT_LOOP = ((0.00, 0.88), (0.91, 0.72), (1.58, 0.30), (1.82, -0.28),
+                       (1.58, -0.87), (0.91, -1.29), (0.00, -1.45))
+        task_routes = {
+            "go_left": np.array(_COMMON_ARM + _LEFT_LOOP[1:], dtype=np.float32),
+            "go_right": np.array(_COMMON_ARM + _RIGHT_LOOP[1:], dtype=np.float32),
+        }
+        task_color = {"go_left": "tab:blue", "go_right": "tab:orange"}
+
+        parquet_files = sorted(Path(episodes_dir).glob("**/episode_*/data.parquet"))
+        if not parquet_files:
+            return
+
+        fig, axes = plt.subplots(1, 2, figsize=(14, 7))
+        any_pose = False
+        for ax, task_name in zip(axes, ("go_left", "go_right")):
+            route = task_routes[task_name]
+            ax.plot(route[:, 0], route[:, 1], "k--", lw=2.5, label="expert path", zorder=4)
+            ax.scatter(float(route[0, 0]), float(route[0, 1]), c="green", s=80, zorder=6, label="start")
+            n_plotted = 0
+            for f in parquet_files:
+                try:
+                    df = pd.read_parquet(f, columns=["pose_x", "pose_y", "task"])
+                    if str(df["task"].iloc[0]) != task_name:
+                        continue
+                    xs = df["pose_x"].to_numpy(dtype=np.float32)
+                    ys = df["pose_y"].to_numpy(dtype=np.float32)
+                    if not np.all(np.isnan(xs)):
+                        ax.plot(xs, ys, alpha=0.5, lw=0.9, color=task_color[task_name])
+                        n_plotted += 1
+                        any_pose = True
+                except Exception:
+                    continue
+            label_name = task_name.replace("_", " ")
+            ax.set_title(f"{label_name}  ({n_plotted} episodes)", fontsize=11)
+            ax.set_aspect("equal")
+            ax.grid(True, alpha=0.3)
+            ax.set_xlabel("x (m)")
+            ax.set_ylabel("y (m)")
+            ax.legend(fontsize=8, loc="upper right")
+
+        status = "saved poses" if any_pose else "pose_x/pose_y missing — reference path only"
+        fig.suptitle(f"Expert Trajectory Overlay on Figure-8 Map ({status})", fontsize=12)
+        fig.tight_layout()
+        fig.savefig(run_dir / "trajectory_overlay.png", dpi=110)
+        plt.close(fig)
+        print(f"[train] Trajectory overlay saved → {run_dir / 'trajectory_overlay.png'}")
+    except Exception as exc:
+        print(f"[train] Warning: could not generate trajectory overlay: {exc}")
+
+
 def _save_loss_plot(run_dir: Path, history: list[dict[str, float]]) -> None:
     try:
         import matplotlib
@@ -176,6 +236,8 @@ def main() -> None:
     run_dir = resolve_run_dir(Path(args.run_dir))
     checkpoint_dir = run_dir / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    _save_trajectory_overlay(run_dir, Path(args.episodes_dir))
 
     image_size = (args.image_size, args.image_size)
     chunk_size = args.chunk_size
